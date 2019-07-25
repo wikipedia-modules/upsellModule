@@ -1,6 +1,6 @@
 {
   "name": "upsell-module",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "index.js",
   "repository": "git@github.com:wikipedia-modules/upsellModule.git",
   "author": "Edgardo Ramírez León",

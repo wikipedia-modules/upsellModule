@@ -125,7 +125,7 @@ module.exports = function upsell(data) {
   const processHtml = (data) => {
     console.log('Processing HTML upsell')
     let $ = cheerio.load(data, {
-      decodeEntities: false
+      decodeEntities: false,
     })
 
     // Create step1 block
@@ -197,7 +197,8 @@ module.exports = function upsell(data) {
 
     frbForm.append(step2)
 
-    data = $.html()
+    // console.log($('head').html() +'\n\n'+ $('body').html())
+    data = $('head').html() + '\n\n' + $('body').html()
     return data
   }
 
