@@ -10,6 +10,29 @@ module.exports = function upsell(data) {
     const styleToInsert = `
 /* Module: Upsell on: ${new Date()} */
 
+.frb-submit {
+    width: 100%;
+    display: block;
+    margin-top: 8px;
+    padding: 16px 2px;
+    background-color: #36c;
+    color: #FFF;
+    cursor: pointer;
+    border-color: #36c;
+    border-radius: 2px;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1;
+    transition: background 100ms, color 100ms, border-color 100ms, box-shadow 100ms;
+}
+
+.frb-submit.inactive {
+    background-color: #f8f9fa;
+    color: #36c;
+    cursor: pointer;
+    bborder: 1px solid #a2a9b1;
+}
+
 /* STEP 2 */
 .frb--minimized, .frb-step2 { display: none; }
 
@@ -130,7 +153,7 @@ module.exports = function upsell(data) {
     const frbContinueButton = `
 
 <fieldset class="frb-continue">
-    <button class="frb-submit" id="continue-btn">
+    <button class="frb-submit active" id="continue-btn">
        <span class="frb-submit-txt">Continue</span>
     </button>
 </fieldset>
@@ -146,10 +169,10 @@ module.exports = function upsell(data) {
        <p class="frb-upsell-color">Monthly support is the best way to ensure that Wikipedia keeps thriving.</p>
   </div>
   <div class="frb-monthly-buttons">
-      <button id="frb-monthly-donate-yes" class="frb-submit" onclick="return false;">
+      <button id="frb-monthly-donate-yes" class="frb-submit active" onclick="return false;">
           <span class="frb-submit-txt">Yes, I'll donate <span class="frb-upsell-ask"></span> each month</span>
       </button>
-      <button id="frb-monthly-donate-no" class="frb-submit" onclick="return false;">
+      <button id="frb-monthly-donate-no" class="frb-submit active" onclick="return false;">
           <span class="frb-submit-txt">No, thanks! I'll make a one-time donation of <span class="frb-ptf-total"></span></span>
       </button>
   </div>
@@ -182,11 +205,321 @@ module.exports = function upsell(data) {
   const processJs = (data) => {
     console.log('Processing JS upsell')
 
-    // const regExpFrbSubmitFunction = RegExp(/(\$\('.frb-submit'\).on*((?:.*?\r?\n?)*)}+\);)/gm)
-    const regExpFrbSubmitFunction = RegExp(/(\$\('\.frb-submit'\).on[\s\S]*?}\);)/gm)
-    // const regExpFunctionjQueryFunction = RegExp(/(\$\(function\(\)*?\s?{)/g)
+    const frbFunctionsToInsertOutsideJqueryFunction = `
+      /* Module: Upsell on: ${new Date()} */
+
+      frb.submitMonthlyForm = function (options, isEndowment) {
+
+          var uri = new mw.Uri('https://payments.wikimedia.org/index.php/Special:GatewayFormChooser');
+          var params = {};
+
+          /* Form selection data */
+          params.payment_method = options.method;
+          if (options.submethod) {
+              params.payment_submethod = options.submethod;
+          }
+          if (options.gateway) {
+              params.gateway = options.gateway;
+          }
+          if (options.ffname) {
+              params.ffname = options.ffname;
+          }
+          if (options.variant) {
+              params.variant = options.variant;
+          }
+          params.recurring = frb.getRecurring();
+
+          params.currency_code = frb.getCurrency(mw.centralNotice.data.country) || 'USD';
+
+          params.uselang = mw.centralNotice.data.uselang || 'en';
+          params.country = mw.centralNotice.data.country || 'XX';
+
+          if (params.uselang === 'pt' && params.country === 'BR') {
+              params.uselang = 'pt-br';
+          }
+          if (params.uselang === 'es' &&
+              (params.country === 'AR' || params.country === 'CL' ||
+                  params.country === 'CO' || params.country === 'MX' ||
+                  params.country === 'PE' || params.country === 'UY')
+          ) {
+              params.uselang = 'es-419';
+          }
+
+          /* Adyen override. frb.ccAdyenCountries is defined in LocalizeJS-2017.js */
+          if (params.payment_method === 'cc' && frb.ccAdyenCountries.indexOf(params.country) !== -1) {
+              params.gateway = 'adyen';
+          }
+
+          /* Amount */
+          var amount = frb.getMonthlyAmount();
+          if ($('#frb-ptf-checkbox').prop('checked')) {
+              frb.extraData.ptf = 1;
+          }
+          params.amount = amount;
+
+          /* Email optin */
+          if ($('input[name="opt_in"]').length > 0) {
+              var opt_inValue = $('input[name="opt_in"]:checked').val();
+              params.opt_in = opt_inValue; // frb.validateForm() already checked it's 1 or 0
+              params.variant = 'emailExplain'; // Show message about receipt on cc form
+          }
+
+          /* Tracking info */
+          if (isEndowment) {
+              params.utm_medium = 'endowment';
+          } else {
+              params.utm_medium = 'sitenotice';
+          }
+          params.utm_campaign = mw.centralNotice.data.campaign || 'test';
+          params.utm_source = frb.buildUtmSource(params);
+
+          frb.extraData.vw = window.innerWidth;
+          frb.extraData.vh = window.innerHeight;
+          frb.extraData.time = Math.round((Date.now() - frb.loadedTime) / 1000);
+
+          if (!$.isEmptyObject(frb.extraData)) {
+              params.utm_key = frb.buildUtmKey(frb.extraData);
+          }
+
+          /* Link to Banner History if enabled */
+          var mixins = mw.centralNotice.getDataProperty('mixins');
+          if (mixins && mixins.bannerHistoryLogger) {
+              params.bannerhistlog = mw.centralNotice.bannerHistoryLogger.id;
+          }
+
+          uri.extend(params);
+
+          if (mixins && mixins.bannerHistoryLogger) {
+              mw.centralNotice.bannerHistoryLogger.ensureLogSent().always(function () {
+                  window.location.href = uri.toString();
+              });
+          } else {
+              window.location.href = uri.toString();
+          }
+
+      };
+      /* Module: Upsell on: ${new Date()} */
+    `
+
+    const upsellMethodsEvents = `
+      /* Module: Upsell on: ${new Date()} */
+
+      // Event: Go back to Step 1
+      $('body').on('click', '.close-optin', function(e) {
+          $('.frb-step2').hide();
+          $('.frb-step1').show().css('opacity', 1);
+
+          $('.frb-optin').hide();
+          $('.frb-frequency').show();
+          $('.frb-amounts').show();
+          $('.frb-methods').show();
+          $('.frb-rml').show();
+          $('.frb-upsell').hide();
+          $('.close-optin').hide();
+          $('.frb-close').show();
+      });
+
+      // Event: Go back to Step 2
+      $('body').on('click', '.close-optin2', function(e) {
+          validAmount = 1;
+          frb.activateCTA();
+          frb.toggleMonthly(false);
+          $('.frb-monthly-diff-amt, .close-optin2').hide();
+          $('.frb-upsell, .frb-monthly-buttons, .frb-monthly-diff-amt-link, .close-optin').show();
+      });
+
+      // Event: Donate monthly other amount
+      $(document).on('click keypress', '.frb-monthly-diff-amt-link', function(e) {
+          if (e.which === 13 || e.type === 'click') {
+            console.log('frb-monthly-diff-amt-link')
+            console.log('valid amount b' + validAmount)
+              e.stopPropagation();
+              document.getElementById('frb-form').otherMonthlyAmount.value = '';
+              validAmount = 0;
+              console.log('valid amount a' + validAmount)
+              frb.activateCTA();
+
+              frb.toggleMonthly(true);
+              $('.frb-upsell, .frb-monthly-buttons, .frb-monthly-diff-amt-link, .close-optin').hide();
+              $('.frb-monthly-diff-amt, .close-optin2').show();
+          }
+      });
+
+      // Event: Validate monthly other amount
+      $(document).on('input change', '#frb-amt-monthly-other-input', function(e) {
+          if ( frb.validateMonthlyAmount() ) {
+              validAmount = 1;
+              frb.updateUpsellAsk();
+          } else {
+              validAmount = 0;
+          }
+          frb.activateCTA();
+      });
+
+      // Event: Monthly donate yes
+      $(document).on('click keypress', '#frb-monthly-donate-yes', function(e) {
+          if(e.which === 13 || e.type === 'click') {
+              e.stopPropagation();
+              frb.toggleMonthly(true);
+              frb.submitMonthlyForm(frb.storedOptions);
+          }
+      });
+
+      // Event: Monthly donate no
+      $(document).on('click keypress', '#frb-monthly-donate-no', function(e) {
+          if(e.which === 13 || e.type === 'click') {
+              e.stopPropagation();
+              frb.submitForm(frb.storedOptions);
+          }
+      });
+
+      // Event: Donate monthly
+      $(document).on('click keypress', '#donate-monthly', function(e) {
+          if(e.which === 13 || e.type === 'click') {
+              e.stopPropagation();
+              if (frb.validateMonthlyAmount()) {
+                  frb.submitMonthlyForm(frb.storedOptions);
+              }
+          }
+      });
+
+      // Event: Go to the second step of the form
+      $(document).on('click', '#continue-btn', function(e) {
+          e.preventDefault();
+          var status = {amount: false, method: false};
+
+          // Validate amount
+          if( frb.validateAmount() ){
+              status.amount = true;
+          }
+
+          // Validate method
+          if($('input[name="frb-methods"]:checked').length === 1){
+              status.method = true;
+          } else {
+              $('.frb-methods').addClass('frb-haserror');
+              $('.frb-error-method').show();
+          }
+
+          if(status.amount === true && status.method === true){
+              if(!$('.frb-optin').is(':visible')) {
+                  $('.frb-optin').slideDown();
+              }
+
+              // Only do step 2 if gift is one-time and payment method supports monthly
+              if( frb.getRecurring(document.getElementById('frb-form')) || $('#frb-frequency-monthly').prop('disabled') ) {
+                  frb.submitForm(frb.storedOptions);
+              } else {
+                  $('.frb-rml-link').fadeOut();
+                  $('.frb-step1').fadeToggle(function(){
+                      $('.frb-step2').fadeToggle();
+                      $('.frb-rml-form').hide();
+                      $('.frb-upsell').show().css('display', 'block');
+                      $('.close-optin').show();
+                      $('.frb-close').hide();
+                  });
+              }
+          }
+      });
+
+      // Function: updateUpsellAsk
+      frb.updateUpsellAsk = function() {
+          var form = document.getElementById('frb-form');
+          var amount, upsellAmount;
+
+          if (form.otherMonthlyAmount.value !== '') {
+              upsellAmount = form.otherMonthlyAmount.value;
+          } else {
+              amount = frb.getAmount(form);
+              feeAmount = frb.calculateFee(amount);
+              if ( $('#frb-ptf-checkbox').prop('checked') ) {
+                  totalAmount = amount + feeAmount;
+              } else {
+                totalAmount = amount;
+              }
+
+              if (totalAmount <= 5 ) {
+                  upsellAmount = 2.75;
+              }
+              else if (totalAmount <= 10 ) {
+                  upsellAmount = 3;
+              }
+              else if (totalAmount <= 20 ) {
+                  upsellAmount = 5;
+              }
+              else if (totalAmount <= 30 ) {
+                  upsellAmount = 7;
+              }
+              else if (totalAmount <= 50 ) {
+                  upsellAmount = 9;
+              }
+              else if (totalAmount <= 100 ) {
+                  upsellAmount = 11;
+              }
+              else if (totalAmount <= 250 ) {
+                  upsellAmount = 25;
+              }
+              else if (totalAmount <= 500 ) {
+                  upsellAmount = 50;
+              }
+              else {
+                  upsellAmount = 100;
+              }
+
+              //update other monthly input
+              form.otherMonthlyAmount.value = upsellAmount;
+          }
+
+          var upsellAmountFormatted = frb.formatCurrency(currency, upsellAmount, language);
+          $('.frb-upsell-ask').text(upsellAmountFormatted);
+      };
+
+      // Event: Update the method on step 2 when a method is clicked in step 1.
+      $('body').on('click', '.frb-button[data-name]', function(){
+          $('.frb-selected-method').text($(this).attr('data-name'));
+      });
+
+      $('body').on('click', '[name="monthly"]', function(){
+          if( $(this).prop('checked') ) {
+              frb.toggleMonthly(true);
+          } else {
+              frb.toggleMonthly(false);
+          }
+      });
+
+      /* Module: Upsell on: ${new Date()} */
+    `
+
+    const frbAmountsEvent = `
+      /* Module: Upsell on: ${new Date()} */
+      $('.frb-amounts').on('input change', function(e) {
+        var target = $(e.target);
+        if ( target.attr('id') !== 'input_amount_other' ) {
+            if ( frb.validateAmount() ) {
+                validAmount = 1;
+            } else {
+                validAmount = 0;
+            }
+        }
+        frb.updateFeeDisplay();
+        frb.updateUpsellAsk();
+        frb.activateCTA();
+      });
+    `
 
     const frbFunctionsToInsertWithinJqueryFunction = `
+      /* Module: Upsell on: ${new Date()} */
+      frb.activateCTA = function () {
+          console.log('frb.activateCTA')
+          console.log(validAmount)
+          console.log(validMethod)
+          if (validAmount && validMethod) {
+              $('.frb-submit').addClass('active');
+          } else {
+              $('.frb-submit:not(#continue-btn)').removeClass('active');
+          }
+      };
+
       frb.getMonthlyAmount = function() {
           var form = document.getElementById('frb-form');
           var amount = null;
@@ -228,295 +561,37 @@ module.exports = function upsell(data) {
               return true;
           }
       };
-      `
 
-    const frbFunctionsToInsertOutsideJqueryFunction = `
-      frb.submitMonthlyForm = function (options, isEndowment) {
-
-        var uri = new mw.Uri('https://payments.wikimedia.org/index.php/Special:GatewayFormChooser');
-        var params = {};
-
-        /* Form selection data */
-        params.payment_method = options.method;
-        if (options.submethod) {
-            params.payment_submethod = options.submethod;
-        }
-        if (options.gateway) {
-            params.gateway = options.gateway;
-        }
-        if (options.ffname) {
-            params.ffname = options.ffname;
-        }
-        if (options.variant) {
-            params.variant = options.variant;
-        }
-        params.recurring = frb.getRecurring();
-
-        params.currency_code = frb.getCurrency(mw.centralNotice.data.country) || 'USD';
-
-        params.uselang = mw.centralNotice.data.uselang || 'en';
-        params.country = mw.centralNotice.data.country || 'XX';
-
-        if (params.uselang === 'pt' && params.country === 'BR') {
-            params.uselang = 'pt-br';
-        }
-        if (params.uselang === 'es' &&
-            (params.country === 'AR' || params.country === 'CL' ||
-                params.country === 'CO' || params.country === 'MX' ||
-                params.country === 'PE' || params.country === 'UY')
-        ) {
-            params.uselang = 'es-419';
-        }
-
-        /* Adyen override. frb.ccAdyenCountries is defined in LocalizeJS-2017.js */
-        if (params.payment_method === 'cc' && frb.ccAdyenCountries.indexOf(params.country) !== -1) {
-            params.gateway = 'adyen';
-        }
-
-        /* Amount */
-        var amount = frb.getMonthlyAmount();
-        if ($('#frb-ptf-checkbox').prop('checked')) {
-            frb.extraData.ptf = 1;
-        }
-        params.amount = amount;
-
-        /* Email optin */
-        if ($('input[name="opt_in"]').length > 0) {
-            var opt_inValue = $('input[name="opt_in"]:checked').val();
-            params.opt_in = opt_inValue; // frb.validateForm() already checked it's 1 or 0
-            params.variant = 'emailExplain'; // Show message about receipt on cc form
-        }
-
-        /* Tracking info */
-        if (isEndowment) {
-            params.utm_medium = 'endowment';
-        } else {
-            params.utm_medium = 'sitenotice';
-        }
-        params.utm_campaign = mw.centralNotice.data.campaign || 'test';
-        params.utm_source = frb.buildUtmSource(params);
-
-        frb.extraData.vw = window.innerWidth;
-        frb.extraData.vh = window.innerHeight;
-        frb.extraData.time = Math.round((Date.now() - frb.loadedTime) / 1000);
-
-        if (!$.isEmptyObject(frb.extraData)) {
-            params.utm_key = frb.buildUtmKey(frb.extraData);
-        }
-
-        /* Link to Banner History if enabled */
-        var mixins = mw.centralNotice.getDataProperty('mixins');
-        if (mixins && mixins.bannerHistoryLogger) {
-            params.bannerhistlog = mw.centralNotice.bannerHistoryLogger.id;
-        }
-
-        uri.extend(params);
-
-        if (mixins && mixins.bannerHistoryLogger) {
-            mw.centralNotice.bannerHistoryLogger.ensureLogSent().always(function () {
-                window.location.href = uri.toString();
-            });
-        } else {
-            window.location.href = uri.toString();
-        }
-
-    };
+      ${upsellMethodsEvents}
     `
 
-    const scriptToInsert = `
-/* Module: Upsell on: ${new Date()} */
-
-// Event: Go back to Step 1
-$('body').on('click', '.close-optin', function(e) {
-    $('.frb-step2').hide();
-    $('.frb-step1').show().css('opacity', 1);
-
-    $('.frb-optin').hide();
-    $('.frb-frequency').show();
-    $('.frb-amounts').show();
-    $('.frb-methods').show();
-    $('.frb-rml').show();
-    $('.frb-upsell').hide();
-    $('.close-optin').hide();
-    $('.frb-close').show();
-});
-
-// Event: Go back to Step 2
-$('body').on('click', '.close-optin2', function(e) {
-    validAmount = 1;
-    frb.activateCTA();
-    frb.toggleMonthly(false);
-    $('.frb-monthly-diff-amt, .close-optin2').hide();
-    $('.frb-upsell, .frb-monthly-buttons, .frb-monthly-diff-amt-link, .close-optin').show();
-});
-
-// Event: Donate monthly other amount
-$(document).on('click keypress', '.frb-monthly-diff-amt-link', function(e) {
-    if(e.which === 13 || e.type === 'click') {
-        e.stopPropagation();
-        document.getElementById('frb-form').otherMonthlyAmount.value = '';
-        validAmount = 0;
-        frb.activateCTA();
-        frb.toggleMonthly(true);
-        $('.frb-upsell, .frb-monthly-buttons, .frb-monthly-diff-amt-link, .close-optin').hide();
-        $('.frb-monthly-diff-amt, .close-optin2').show();
-    }
-});
-
-// Event: Validate monthly other amount
-$(document).on('input change', '#frb-amt-monthly-other-input', function(e) {
-    if ( frb.validateMonthlyAmount() ) {
-        validAmount = 1;
-        frb.updateUpsellAsk();
-    } else {
-        validAmount = 0;
-    }
-    frb.activateCTA();
-});
-
-// Event: Monthly donate yes
-$(document).on('click keypress', '#frb-monthly-donate-yes', function(e) {
-    if(e.which === 13 || e.type === 'click') {
-        e.stopPropagation();
-        frb.toggleMonthly(true);
-        frb.submitMonthlyForm(frb.storedOptions);
-    }
-});
-
-// Event: Monthly donate no
-$(document).on('click keypress', '#frb-monthly-donate-no', function(e) {
-    if(e.which === 13 || e.type === 'click') {
-        e.stopPropagation();
-        frb.submitForm(frb.storedOptions);
-    }
-});
-
-// Event: Donate monthly
-$(document).on('click keypress', '#donate-monthly', function(e) {
-    if(e.which === 13 || e.type === 'click') {
-        e.stopPropagation();
-        frb.submitMonthlyForm(frb.storedOptions);
-    }
-});
-
- // Event: Go to the second step of the form
-$(document).on('click', '#continue-btn', function(e) {
-    e.preventDefault();
-    var status = {amount: false, method: false};
-
-    // Validate amount
-    if( frb.validateAmount() ){
-        status.amount = true;
-    }
-
-    // Validate method
-    if($('input[name="frb-methods"]:checked').length === 1){
-        status.method = true;
-    } else {
-        $('.frb-methods').addClass('frb-haserror');
-        $('.frb-error-method').show();
-    }
-
-    if(status.amount === true && status.method === true){
-        if(!$('.frb-optin').is(':visible')) {
-            $('.frb-optin').slideDown();
-        }
-
-        // Only do step 2 if gift is one-time and payment method supports monthly
-        if( frb.getRecurring(document.getElementById('frb-form')) || $('#frb-frequency-monthly').prop('disabled') ) {
-            frb.submitForm(frb.storedOptions);
-        } else {
-            $('.frb-rml-link').fadeOut();
-            $('.frb-step1').fadeToggle(function(){
-                $('.frb-step2').fadeToggle();
-                $('.frb-rml-form').hide();
-                $('.frb-upsell').show().css('display', 'block');
-                $('.close-optin').show();
-                $('.frb-close').hide();
-            });
-        }
-    }
-});
-
-// Function: updateUpsellAsk
-frb.updateUpsellAsk = function() {
-    var form = document.getElementById('frb-form');
-    var amount, upsellAmount;
-
-    if (form.otherMonthlyAmount.value !== '') {
-        upsellAmount = form.otherMonthlyAmount.value;
-    } else {
-        amount = frb.getAmount(form);
-        feeAmount = frb.calculateFee(amount);
-        if ( $('#frb-ptf-checkbox').prop('checked') ) {
-            totalAmount = amount + feeAmount;
-        } else {
-          totalAmount = amount;
-        }
-
-        if (totalAmount <= 5 ) {
-            upsellAmount = 2.75;
-        }
-        else if (totalAmount <= 10 ) {
-            upsellAmount = 3;
-        }
-        else if (totalAmount <= 20 ) {
-            upsellAmount = 5;
-        }
-        else if (totalAmount <= 30 ) {
-            upsellAmount = 7;
-        }
-        else if (totalAmount <= 50 ) {
-            upsellAmount = 9;
-        }
-        else if (totalAmount <= 100 ) {
-            upsellAmount = 11;
-        }
-        else if (totalAmount <= 250 ) {
-            upsellAmount = 25;
-        }
-        else if (totalAmount <= 500 ) {
-            upsellAmount = 50;
-        }
-        else {
-            upsellAmount = 100;
-        }
-
-        //update other monthly input
-        form.otherMonthlyAmount.value = upsellAmount;
-    }
-
-    var upsellAmountFormatted = frb.formatCurrency(currency, upsellAmount, language);
-    $('.frb-upsell-ask').text(upsellAmountFormatted);
-};
-
-// Event: Update the method on step 2 when a method is clicked in step 1.
-$('body').on('click', '.frb-button[data-name]', function(){
-    $('.frb-selected-method').text($(this).attr('data-name'));
-});
-
-$('body').on('click', '[name="monthly"]', function(){
-    if( $(this).prop('checked') ) {
-        frb.toggleMonthly(true);
-    } else {
-        frb.toggleMonthly(false);
-    }
-});
-
-/* Module: Upsell on: ${new Date()} */
-`
-
     try {
-      const endOfScriptBlock = data.indexOf('</script>')
 
-      data = data.substring(0, endOfScriptBlock) + '\n' + scriptToInsert + '\n\n' + data.substring(endOfScriptBlock)
+
+      // const endOfScriptBlock = data.indexOf('</script>')
+      // data = data.substring(0, endOfScriptBlock) + '\n' + scriptToInsert + '\n\n' + data.substring(endOfScriptBlock)
+
+      const regExpFrbSubmitFunction = RegExp(/(\$\('\.frb-submit'\).on[\s\S]*?}\);)/gm)
       data = data.replace(regExpFrbSubmitFunction, "")
+
+      const regexExpFrbAmountsEvent = RegExp(/(\$\('.frb-amounts'\).on[\s\S]*?}\);)/gm)
+      data = data.replace(regexExpFrbAmountsEvent, "// $('.frb-amounts').on...")
+
+      const regexExpFrbActivateCtaFunction = RegExp(/(frb.activateCTA =[\s\S]*?};)/gm)
+      data = data.replace(regexExpFrbActivateCtaFunction, "// frb.activateCTA =...")
+
 
       const startOfJqueryFunction = data.indexOf('$(function')
       data = data.substring(0, startOfJqueryFunction) + '\n' + frbFunctionsToInsertOutsideJqueryFunction + '\n\n' + data.substring(startOfJqueryFunction)
 
-      const startOfJActivateCTAFunction = data.indexOf('frb.activateCTA =')
+      const startOfJActivateCTAFunction = data.indexOf('// frb.activateCTA =...')
       data = data.substring(0, startOfJActivateCTAFunction) + '\n' + frbFunctionsToInsertWithinJqueryFunction + '\n\n' + data.substring(startOfJActivateCTAFunction)
+
+      const startOfFrbAmountsEvent = data.indexOf("// $('.frb-amounts').on...")
+      data = data.substring(0, startOfFrbAmountsEvent) + '\n' + frbAmountsEvent + '\n\n' + data.substring(startOfFrbAmountsEvent)
+
+      data = data.replace(startOfFrbAmountsEvent, "")
+
     } catch (e) {
       console.log(e)
     }
